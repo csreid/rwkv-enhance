@@ -21,7 +21,8 @@ def main(path):
     torch.manual_seed(c["seed"])
     dev, dt = c.get("device", "cuda"), getattr(torch, c["dtype"])
     kw = {}
-    if c.get("fallback_kernels"):  # GPUs Triton can't target (e.g. Pascal)
+    old_gpu = dev.startswith("cuda") and torch.cuda.get_device_capability(0) < (7, 0)
+    if c.get("fallback_kernels") or old_gpu:  # GPUs Triton can't target (e.g. Pascal)
         from .torch_fallback import patch
         patch()
         kw = dict(fuse_norm=False, fuse_cross_entropy=False, fuse_linear_cross_entropy=False)

@@ -24,8 +24,9 @@ def _wkv_segment(h, r, w, k, v, a, b):
     return torch.stack(outs, 1), h
 
 
-def wkv7(r, w, k, v, a, b, scale=1.0, initial_state=None, output_final_state=False,
-         cu_seqlens=None, chunk=CHUNK):
+def wkv7_loop(r, w, k, v, a, b, scale=1.0, initial_state=None, output_final_state=False,
+              cu_seqlens=None, chunk=CHUNK):
+    """Reference: per-token loop (slow, simple). Kept for testing."""
     assert cu_seqlens is None, "varlen not supported in torch fallback"
     B, T, H, K = r.shape
     V = v.shape[-1]
@@ -46,6 +47,48 @@ def wkv7(r, w, k, v, a, b, scale=1.0, initial_state=None, output_final_state=Fal
             o, h = _wkv_segment(*args)
         outs.append(o)
     o = torch.cat(outs, 1).to(dt)
+    return o, (h if output_final_state else None)
+
+
+def _wkv_chunk(h, r, w, k, v, a, b):
+    """Chunk-parallel form of the same recurrence. Shapes: h [B,H,K,V];
+    r,w,k,a,b [B,H,C,K]; v [B,H,C,V]. Requires per-step w >= ~-1 (layer uses >= -0.6065),
+    so exp(-cumsum(w)) stays well inside fp32 range for C <= 64.
+
+    With h = Gamma * h~ (Gamma = cumulative decay), h~ follows a decay-free rank-1 update:
+      h~_t = h~_{t-1} + b~_t (a~_t^T h~_{t-1}) + k~_t v_t^T
+    giving (I - Lb) u = a~ h0 + Lk v  (unit lower-triangular solve), then
+      o = r^ h0 + tril(r^ b~^T) u + tril(r^ k~^T) v ;  h_C = Gamma_C (h0 + b~^T u + k~^T v).
+    """
+    g = torch.cumsum(w, 2)                      # inclusive log-decay
+    gam, gam_prev, inv = torch.exp(g), torch.exp(g - w), torch.exp(-g)
+    rh, ah, bt, kt = r * gam, a * gam_prev, b * inv, k * inv
+    strict = lambda x: torch.tril(x, -1)
+    Lb = strict(ah @ bt.transpose(-1, -2))
+    Lk = strict(ah @ kt.transpose(-1, -2))
+    u = torch.linalg.solve_triangular(-Lb, ah @ h + Lk @ v, upper=False, unitriangular=True)
+    o = rh @ h + torch.tril(rh @ bt.transpose(-1, -2)) @ u + torch.tril(rh @ kt.transpose(-1, -2)) @ v
+    h = gam[:, :, -1].unsqueeze(-1) * (h + bt.transpose(-1, -2) @ u + kt.transpose(-1, -2) @ v)
+    return o, h
+
+
+def wkv7(r, w, k, v, a, b, scale=1.0, initial_state=None, output_final_state=False,
+         cu_seqlens=None, chunk=32):
+    assert cu_seqlens is None, "varlen not supported in torch fallback"
+    B, T, H, K = r.shape
+    V = v.shape[-1]
+    dt = r.dtype
+    ft = torch.promote_types(dt, torch.float32)
+    # [B,T,H,D] -> [B,H,T,D]
+    r, w, k, v, a, b = (x.to(ft).transpose(1, 2) for x in (r * scale, w, k, v, a, b))
+    h = (torch.zeros(B, H, K, V, device=r.device, dtype=ft) if initial_state is None
+         else initial_state.to(ft))
+    outs = []
+    for s in range(0, T, chunk):
+        sl = slice(s, s + chunk)
+        o, h = _wkv_chunk(h, r[:, :, sl], w[:, :, sl], k[:, :, sl], v[:, :, sl], a[:, :, sl], b[:, :, sl])
+        outs.append(o)
+    o = torch.cat(outs, 2).transpose(1, 2).to(dt)
     return o, (h if output_final_state else None)
 
 

@@ -11,8 +11,8 @@ from fla.models import RWKV7Config, RWKV7ForCausalLM
 cfg = RWKV7Config(hidden_size=128, num_hidden_layers=2, head_dim=64, vocab_size=1000,
                   fuse_norm=False, fuse_cross_entropy=False)
 import sys
-if "--fallback" in sys.argv:
-    from rwkv_enhance.torch_fallback import patch; patch(); print("using torch fallback kernels")
+if "--fallback" in sys.argv or torch.cuda.get_device_capability(0) < (7, 0):
+    from rwkv_enhance.torch_fallback import patch; patch(); print("using torch fallback kernels (pre-Volta GPU or --fallback)")
 m = RWKV7ForCausalLM(cfg).cuda().float()
 x = torch.randint(0, 1000, (2, 256), device="cuda")
 try:

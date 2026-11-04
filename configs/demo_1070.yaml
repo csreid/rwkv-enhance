@@ -1,5 +1,5 @@
 # Demo on an 8GB GTX 1070 (Pascal: no bf16, fp32 only). Not meant to produce a good model.
-student: fla-hub/rwkv7-0.1B-world
+student: fla-hub/rwkv7-191M-world
 teacher: null
 kd_alpha: 0.5
 kd_temperature: 1.0

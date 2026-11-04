@@ -1,5 +1,17 @@
+import pytest
 import torch
 from rwkv_enhance import torch_fallback as fb
+
+
+def realistic(B, T, H, K, dtype=torch.float32, grad=False):
+    """Inputs shaped like the real layer's: a=-kk, b=kk*gate, ||kk||=1, w in [-0.6065, 0]."""
+    kk = torch.nn.functional.normalize(torch.randn(B, T, H, K, dtype=dtype), dim=-1)
+    ts = [torch.randn(B, T, H, K, dtype=dtype), -0.6065 * torch.sigmoid(torch.randn(B, T, H, K, dtype=dtype)),
+          0.3 * torch.randn(B, T, H, K, dtype=dtype), torch.randn(B, T, H, K, dtype=dtype),
+          -kk, kk * torch.rand(B, T, H, K, dtype=dtype)]
+    if grad:
+        ts = [x.detach().requires_grad_() for x in ts]
+    return ts
 
 
 def naive(r, w, k, v, a, b, scale=1.0):
@@ -13,31 +25,28 @@ def naive(r, w, k, v, a, b, scale=1.0):
     return torch.stack(o, 1), h
 
 
-def test_wkv_matches_naive_incl_grads():
+@pytest.mark.parametrize('chunk', [1, 7, 32, 64])
+def test_wkv_matches_naive_incl_grads(chunk):
     torch.manual_seed(0)
     B, T, H, K = 2, 70, 3, 8   # T not a multiple of chunk
-    mk = lambda: torch.randn(B, T, H, K, dtype=torch.float64, requires_grad=True)
-    r, k, v, a, b = mk(), mk(), mk(), mk(), mk()
-    w = (-0.6 * torch.rand(B, T, H, K, dtype=torch.float64)).requires_grad_()
-    ins = (r, w, k, v, a, b)
+    ins = tuple(realistic(B, T, H, K, torch.float64, grad=True))
     o1, h1 = naive(*ins, 0.7)
-    o2, h2 = fb.wkv7(*ins, scale=0.7, output_final_state=True)
-    assert torch.allclose(o1, o2.double(), atol=1e-9) and torch.allclose(h1, h2.double(), atol=1e-9)
+    o2, h2 = fb.wkv7(*ins, scale=0.7, output_final_state=True, chunk=chunk)
+    assert torch.allclose(o1, o2.double(), atol=1e-8, rtol=1e-6) and torch.allclose(h1, h2.double(), atol=1e-8, rtol=1e-6)
     g1 = torch.autograd.grad(o1.square().sum(), ins)
     g2 = torch.autograd.grad(o2.square().sum(), ins)
     for x, y in zip(g1, g2):
-        assert torch.allclose(x, y, atol=1e-8)
+        assert torch.allclose(x, y, atol=1e-6, rtol=1e-5)
 
 
 def test_streaming_state_equals_full():
     torch.manual_seed(1)
     B, T, H, K = 1, 40, 2, 8
-    r, k, v, a, b = (torch.randn(B, T, H, K) for _ in range(5))
-    w = -0.6 * torch.rand(B, T, H, K)
-    full, hf = fb.wkv7(r, w, k, v, a, b, output_final_state=True)
-    o1, h1 = fb.wkv7(*(x[:, :17] for x in (r, w, k, v, a, b)), output_final_state=True)
-    o2, h2 = fb.wkv7(*(x[:, 17:] for x in (r, w, k, v, a, b)), initial_state=h1, output_final_state=True)
-    assert torch.allclose(full, torch.cat([o1, o2], 1), atol=1e-5) and torch.allclose(hf, h2, atol=1e-5)
+    r, w, k, v, a, b = realistic(B, T, H, K)
+    full, hf = fb.wkv7(r, w, k, v, a, b, output_final_state=True, chunk=8)
+    o1, h1 = fb.wkv7(*(x[:, :17] for x in (r, w, k, v, a, b)), output_final_state=True, chunk=8)
+    o2, h2 = fb.wkv7(*(x[:, 17:] for x in (r, w, k, v, a, b)), initial_state=h1, output_final_state=True, chunk=8)
+    assert torch.allclose(full, torch.cat([o1, o2], 1), atol=1e-4, rtol=1e-4) and torch.allclose(hf, h2, atol=1e-4, rtol=1e-4)
 
 
 def test_full_model_trains_on_cpu():
@@ -68,3 +77,15 @@ def test_patch_disables_compile_and_sqrelu_matches():
     y = fb.sqrelu(x); y.sum().backward()
     assert torch.allclose(y, torch.relu(x) ** 2)
     assert torch.allclose(x.grad, 2 * torch.relu(x))
+
+
+def test_loop_and_chunked_agree_fp32_realistic_scale():
+    torch.manual_seed(2)
+    B, T, H, K = 2, 256, 4, 64
+    kk = torch.nn.functional.normalize(torch.randn(B, T, H, K), dim=-1)
+    a_gate = torch.rand(B, T, H, K)
+    args = (torch.randn(B, T, H, K), -0.6065 * torch.sigmoid(torch.randn(B, T, H, K)),
+            0.3 * torch.randn(B, T, H, K), torch.randn(B, T, H, K), -kk, kk * a_gate)
+    o1, _ = fb.wkv7_loop(*args)
+    o2, _ = fb.wkv7(*args)
+    assert torch.allclose(o1, o2, atol=2e-4, rtol=1e-3), (o1 - o2).abs().max()
