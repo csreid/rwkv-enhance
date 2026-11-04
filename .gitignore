@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Environments (uv.lock IS committed on purpose, for reproducible installs)
+.venv/
+venv/
+.env
+.env.*
+
+# Training outputs: checkpoints, logs, rollouts
+runs/
+checkpoints/
+wandb/
+tensorboard/
+lightning_logs/
+*.log
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.gguf
+
+# Generated data (regenerate with scripts/make_demos.py)
+demos*.jsonl
+*.jsonl
+!configs/**/*.jsonl
+
+# Plots generated from runs (script scripts/plot_log.py is kept)
+plots/
+
+# Hugging Face / Triton / torch caches
+.cache/
+.triton/
+hf_cache/
+datasets_cache/
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Claude Code local settings
+.claude/settings.local.json
