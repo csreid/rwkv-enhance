@@ -18,3 +18,13 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/rwkv_enhance"]
+
+# Pascal (GTX 10xx) GPUs need the cu126 wheels; newer CUDA builds dropped sm_61.
+# Pinning here keeps `uv sync` / `uv run` from swapping torch back to the PyPI build.
+[tool.uv.sources]
+torch = { index = "pytorch-cu126" }
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
