@@ -83,8 +83,16 @@ def gate_output_correction(o, r, k, r_k, v, g):
     return (o + corr) * g
 
 
+def sqrelu(x):
+    return torch.relu(x).square()
+
+
 def patch():
     """Swap fla's Triton-backed names in the RWKV7 layer/model modules."""
+    # fla wraps many small ops in @torch.compile (inductor needs Triton). Make them eager.
+    torch._dynamo.config.disable = True
+    from fla.modules.activations import ACT2FN
+    ACT2FN["sqrelu"] = sqrelu
     import fla.layers.rwkv7 as layer
     import fla.models.rwkv7.modeling_rwkv7 as model
     for name in ("chunk_rwkv7", "fused_mul_recurrent_rwkv7", "token_shift",

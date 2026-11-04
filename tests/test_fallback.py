@@ -57,3 +57,14 @@ def test_full_model_trains_on_cpu():
     with torch.no_grad():
         y = x.clone(); y[:, 50:] = (y[:, 50:] + 1) % 200
         assert torch.allclose(m(input_ids=x).logits[:, :50], m(input_ids=y).logits[:, :50], atol=1e-5)
+
+
+def test_patch_disables_compile_and_sqrelu_matches():
+    fb.patch()
+    from fla.modules.activations import ACT2FN, sqrelu as fla_sqrelu
+    assert torch._dynamo.config.disable
+    assert ACT2FN["sqrelu"] is fb.sqrelu
+    x = torch.randn(5, 7, requires_grad=True)
+    y = fb.sqrelu(x); y.sum().backward()
+    assert torch.allclose(y, torch.relu(x) ** 2)
+    assert torch.allclose(x.grad, 2 * torch.relu(x))
