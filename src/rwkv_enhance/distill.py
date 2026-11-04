@@ -20,12 +20,17 @@ def main(path):
     c = yaml.safe_load(open(path))
     torch.manual_seed(c["seed"])
     dev, dt = c.get("device", "cuda"), getattr(torch, c["dtype"])
+    kw = {}
+    if c.get("fallback_kernels"):  # GPUs Triton can't target (e.g. Pascal)
+        from .torch_fallback import patch
+        patch()
+        kw = dict(fuse_norm=False, fuse_cross_entropy=False, fuse_linear_cross_entropy=False)
     tok = AutoTokenizer.from_pretrained(c["student"], trust_remote_code=True)
-    model = AutoModelForCausalLM.from_pretrained(c["student"], torch_dtype=dt, trust_remote_code=True).to(dev)
+    model = AutoModelForCausalLM.from_pretrained(c["student"], torch_dtype=dt, trust_remote_code=True, **kw).to(dev)
     model.train()
     teacher = None
     if c["teacher"]:
-        teacher = AutoModelForCausalLM.from_pretrained(c["teacher"], torch_dtype=dt, trust_remote_code=True).to(dev).eval()
+        teacher = AutoModelForCausalLM.from_pretrained(c["teacher"], torch_dtype=dt, trust_remote_code=True, **kw).to(dev).eval()
         for p in teacher.parameters():
             p.requires_grad_(False)
 

@@ -9,6 +9,7 @@ include_reasoning: true
 max_seq_len: 512
 shuffle_buffer: 1000
 device: cuda
+fallback_kernels: true   # pure-PyTorch WKV; Triton can't target sm_61
 batch_size: 2
 grad_accum: 8
 lr: 5.0e-5
