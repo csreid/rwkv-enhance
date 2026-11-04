@@ -1,0 +1,25 @@
+# Warm start: teach the tool format with expert demos (make_demos.py), starting from the distilled model.
+student: runs/demo_1070/step200
+teacher: null
+kd_alpha: 0.5
+kd_temperature: 1.0
+dataset: jsonl:demos.jsonl
+splits: []
+include_reasoning: true
+max_seq_len: 1024
+shuffle_buffer: 0
+device: cuda
+fallback_kernels: true
+batch_size: 4
+grad_accum: 4
+lr: 5.0e-5
+min_lr_ratio: 0.1
+warmup_steps: 10
+max_steps: 300
+weight_decay: 0.01
+grad_clip: 1.0
+dtype: float32
+log_every: 10
+save_every: 100
+output_dir: runs/sft_demos
+seed: 0

@@ -54,3 +54,22 @@ def collate(batch, pad_id=0):
         ids[k, : len(i)] = torch.tensor(i)
         lab[k, : len(l)] = torch.tensor(l)
     return {"input_ids": ids, "labels": lab}
+
+
+class JsonlStream(IterableDataset):
+    """Endless shuffled stream over a local .jsonl of {"messages": [...]} (e.g. expert demos)."""
+
+    def __init__(self, tokenizer, path, max_len, seed=0):
+        import json
+        self.tok, self.max_len, self.seed = tokenizer, max_len, seed
+        self.rows = [json.loads(l)["messages"] for l in open(path) if l.strip()]
+
+    def __iter__(self):
+        rng = random.Random(self.seed)
+        while True:
+            order = list(range(len(self.rows)))
+            rng.shuffle(order)
+            for i in order:
+                out = format_example(self.rows[i], self.tok, True, self.max_len)
+                if out is not None:
+                    yield out

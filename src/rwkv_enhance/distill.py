@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import fla  # noqa: F401  registers RWKV7 with transformers
 
-from .data import NemotronStream, collate
+from .data import JsonlStream, NemotronStream, collate
 from .losses import distill_loss
 
 
@@ -35,8 +35,11 @@ def main(path):
         for p in teacher.parameters():
             p.requires_grad_(False)
 
-    ds = NemotronStream(tok, c["dataset"], c["splits"], c["include_reasoning"],
-                        c["max_seq_len"], c["shuffle_buffer"], c["seed"])
+    if c["dataset"].startswith("jsonl:"):
+        ds = JsonlStream(tok, c["dataset"][6:], c["max_seq_len"], c["seed"])
+    else:
+        ds = NemotronStream(tok, c["dataset"], c["splits"], c["include_reasoning"],
+                            c["max_seq_len"], c["shuffle_buffer"], c["seed"])
     dl = DataLoader(ds, batch_size=c["batch_size"], collate_fn=collate)
     opt = torch.optim.AdamW(model.parameters(), lr=c["lr"], weight_decay=c["weight_decay"], betas=(0.9, 0.99))
     os.makedirs(c["output_dir"], exist_ok=True)
@@ -48,12 +51,8 @@ def main(path):
         stats = {}
         for _ in range(c["grad_accum"]):
             b = {k: v.to(dev) for k, v in next(it).items()}
-            logits = model(input_ids=b["input_ids"]).logits
-            tl = None
-            if teacher is not None:
-                with torch.no_grad():
-                    tl = teacher(input_ids=b["input_ids"]).logits
-            loss, stats = distill_loss(logits, b["labels"], tl, c["kd_alpha"], c["kd_temperature"])
+            loss, stats = distill_loss(model, b["input_ids"], b["labels"], teacher,
+                                       c["kd_alpha"], c["kd_temperature"])
             (loss / c["grad_accum"]).backward()
         gn = torch.nn.utils.clip_grad_norm_(model.parameters(), c["grad_clip"])
         opt.step(); opt.zero_grad(set_to_none=True)

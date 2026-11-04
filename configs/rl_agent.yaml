@@ -1,0 +1,31 @@
+student: runs/sft_demos/step300      # warm-started checkpoint
+device: cuda
+fallback_kernels: true               # Pascal; harmless to leave on elsewhere but slower
+dtype: float32
+seed: 0
+
+iterations: 500
+prompts_per_iter: 4                  # tasks per iteration
+group_size: 8                        # rollouts per task (GRPO group)
+temperature: 1.0
+max_turns: 12
+max_new_per_turn: 96
+max_tokens: 6000                     # per-episode token budget
+max_obs_chars: 2000
+cmd_timeout: 10
+
+seg_len: 1024                        # truncated-BPTT segment length
+clip_eps: 0.2
+grad_clip: 1.0
+normalize_std: true
+lr: 1.0e-5
+weight_decay: 0.0
+
+start_level: 1
+max_level: 8
+curriculum_window: 48                # episodes at the current level before considering a level-up
+level_up_at: 0.8
+current_level_frac: 0.5              # rest of the batch rehearses easier levels
+
+save_every: 50
+output_dir: runs/rl_agent

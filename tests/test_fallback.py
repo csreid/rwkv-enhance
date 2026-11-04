@@ -89,3 +89,83 @@ def test_loop_and_chunked_agree_fp32_realistic_scale():
     o1, _ = fb.wkv7_loop(*args)
     o2, _ = fb.wkv7(*args)
     assert torch.allclose(o1, o2, atol=2e-4, rtol=1e-3), (o1 - o2).abs().max()
+
+
+def _tiny(seed):
+    fb.patch()
+    from fla.models import RWKV7Config, RWKV7ForCausalLM
+    torch.manual_seed(seed)
+    m = RWKV7ForCausalLM(RWKV7Config(hidden_size=64, num_hidden_layers=2, head_dim=16, vocab_size=300,
+                                     fuse_norm=False, fuse_cross_entropy=False))
+    # o_proj / value are zero-initialised; randomise so every parameter gets gradient
+    for p in m.parameters():
+        if p.abs().sum() == 0:
+            torch.nn.init.normal_(p, std=0.05)
+    return m
+
+
+@pytest.mark.parametrize("with_teacher", [False, True])
+def test_assistant_only_loss_matches_full_logits(with_teacher):
+    from rwkv_enhance.losses import distill_loss
+    import torch.nn.functional as F
+    student, teacher = _tiny(0), (_tiny(1).eval() if with_teacher else None)
+    ids = torch.randint(0, 300, (3, 40))
+    labels = ids.clone()
+    labels[:, :11] = -100; labels[0, 30:] = -100; labels[2, 5:20] = -100   # mixed masks
+    alpha, T = 0.4, 2.0
+
+    # reference: full [B,T,V] logits, as the old implementation did
+    logits = student(input_ids=ids).logits[:, :-1].float()
+    y = labels[:, 1:]; m = y != -100
+    ce = F.cross_entropy(logits.reshape(-1, 300), y.reshape(-1), ignore_index=-100)
+    ref = ce
+    if with_teacher:
+        with torch.no_grad():
+            tl = teacher(input_ids=ids).logits[:, :-1].float()
+        kl = F.kl_div(F.log_softmax(logits[m] / T, -1), F.log_softmax(tl[m] / T, -1),
+                      log_target=True, reduction="batchmean") * T * T
+        ref = (1 - alpha) * ce + alpha * kl
+    g_ref = torch.autograd.grad(ref, list(student.parameters()), allow_unused=True)
+
+    got, stats = distill_loss(student, ids, labels, teacher, alpha, T, chunk=16)  # several chunks
+    g_got = torch.autograd.grad(got, list(student.parameters()), allow_unused=True)
+    assert stats["tokens"] == int(m.sum())
+    assert torch.allclose(ref, got, atol=1e-5, rtol=1e-5), (ref.item(), got.item())
+    for a, b in zip(g_ref, g_got):
+        if a is None:
+            assert b is None
+        else:
+            assert torch.allclose(a, b, atol=1e-5, rtol=1e-4)
+
+
+def test_session_incremental_matches_full_forward():
+    from rwkv_enhance.state import Session
+    m = _tiny(0).eval()
+    ids = torch.randint(0, 300, (60,)).tolist()
+    with torch.no_grad():
+        full = m(input_ids=torch.tensor([ids])).logits[0]
+    s = Session(m)
+    s.feed(ids[:25]);                  assert torch.allclose(s.logits, full[24], atol=1e-4)   # parallel prefill
+    for i in range(25, 40):            # one token at a time (decode path)
+        s.feed([ids[i]]);              assert torch.allclose(s.logits, full[i], atol=1e-4), i
+    s.feed(ids[40:]);                  assert torch.allclose(s.logits, full[59], atol=1e-4)   # mixed chunk
+    assert s.n_tokens == 60
+    tok, lp = s.sample(1.0)
+    assert 0 <= tok < 300 and lp <= 0
+
+
+def test_segmented_forward_with_detached_state_matches_full():
+    from rwkv_enhance.state import detach_cache
+    m = _tiny(0)
+    ids = torch.randint(0, 300, (1, 90))
+    with torch.no_grad():
+        full = m.model(input_ids=ids).last_hidden_state
+    cache, outs = None, []
+    for s in range(0, 90, 32):                       # segments 32,32,26
+        o = m.model(input_ids=ids[:, s:s + 32], past_key_values=cache, use_cache=True)
+        outs.append(o.last_hidden_state)
+        cache = detach_cache(o.past_key_values)
+    assert torch.allclose(torch.cat(outs, 1), full, atol=1e-4)
+    # gradient reaches parameters from a late segment, but not through the detached state
+    outs[-1].sum().backward()
+    assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in m.parameters())
