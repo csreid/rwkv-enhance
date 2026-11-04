@@ -1,0 +1,20 @@
+[project]
+name = "rwkv-enhance"
+version = "0.1.0"
+description = "Distillation (and later RL) training for RWKV7 'goose' models"
+requires-python = ">=3.10"
+dependencies = [
+  "torch>=2.4",
+  "transformers>=4.50",
+  "datasets>=3.0",
+  "flash-linear-attention",   # provides RWKV7 HF implementation + triton kernels
+  "accelerate",
+  "pyyaml",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rwkv_enhance"]

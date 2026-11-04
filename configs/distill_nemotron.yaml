@@ -1,0 +1,27 @@
+# Student: RWKV7 "goose" (HF/fla format)
+student: fla-hub/rwkv7-1.5B-world
+# Optional logit-level teacher. MUST share the student's tokenizer/vocab.
+# Leave null for pure sequence-level distillation (SFT on Nemotron's teacher-written responses).
+teacher: null
+kd_alpha: 0.5        # weight on KL term when teacher is set (loss = (1-a)*CE + a*KL)
+kd_temperature: 1.0
+
+dataset: nvidia/Nemotron-Post-Training-Dataset-v1
+splits: [chat, math, code, stem]   # sampled round-robin
+include_reasoning: true            # keep teacher reasoning traces in targets
+max_seq_len: 2048
+shuffle_buffer: 10000
+
+batch_size: 4
+grad_accum: 8
+lr: 2.0e-5
+min_lr_ratio: 0.1
+warmup_steps: 100
+max_steps: 5000
+weight_decay: 0.01
+grad_clip: 1.0
+dtype: bfloat16
+log_every: 10
+save_every: 500
+output_dir: runs/distill_nemotron
+seed: 0

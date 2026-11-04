@@ -1,0 +1,24 @@
+# Demo on an 8GB GTX 1070 (Pascal: no bf16, fp32 only). Not meant to produce a good model.
+student: fla-hub/rwkv7-0.1B-world
+teacher: null
+kd_alpha: 0.5
+kd_temperature: 1.0
+dataset: nvidia/Nemotron-Post-Training-Dataset-v1
+splits: [chat, math]
+include_reasoning: true
+max_seq_len: 512
+shuffle_buffer: 1000
+device: cuda
+batch_size: 2
+grad_accum: 8
+lr: 5.0e-5
+min_lr_ratio: 0.1
+warmup_steps: 10
+max_steps: 200
+weight_decay: 0.01
+grad_clip: 1.0
+dtype: float32
+log_every: 5
+save_every: 100
+output_dir: runs/demo_1070
+seed: 0
